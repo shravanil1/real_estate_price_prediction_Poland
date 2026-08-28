@@ -1,4 +1,4 @@
-# Poland Apartment Price Predictor
+# Real Estate Price Prediction — Poland
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.8%2B-blue?logo=python&logoColor=white" alt="Python">
@@ -10,7 +10,7 @@
 
 <p align="center">
   <strong>Predicting residential apartment sale prices across 15 Polish cities, using 11 months of listing snapshots</strong><br>
-  From raw monthly listing exports through leakage-safe cleaning, exploratory analysis, feature engineering, and gradient-boosted ensemble modeling.
+  A leakage-safe, time-aware pipeline: data wrangling, exploratory analysis, feature engineering, and gradient-boosted ensemble modeling, evaluated on genuinely future listings.
 </p>
 
 ---
@@ -38,24 +38,24 @@
 
 ## About This Project
 
-This project is a rebuild of an earlier single-city ("Flats in Cracow") pricing model, using a richer, publicly available, multi-city dataset instead of a custom scraper. A Kaggle dataset of Polish apartment listings — 15 cities, 11 monthly snapshots from August 2023 to June 2024 — was cleaned, explored, and used to train gradient-boosted regression models to predict sale price.
+This project predicts apartment sale prices across 15 Polish cities using 11 months of real listing data (August 2023 – June 2024). Rather than a single random train/test split, the model is evaluated on months it never saw during training — the same way it would actually be used in practice.
 
 The project showcases:
-- **Leakage-safe pipeline** — outlier filtering and imputation fit on the training split only, not the full dataset
-- **Time-based evaluation** — the model is tested on months it never trained on, not a random split, to reflect how it would actually be used
-- **Temporal price tracking** — repeated listings across months are kept (not deduplicated away), preserving real price movement over time
-- **Modern gradient boosting** — LightGBM and CatBoost in place of scikit-learn's slower `GradientBoostingRegressor`, plus a learned Stacking ensemble
+- **Leakage-safe pipeline** — outlier filtering and missing-value imputation are fit on the training split only, never on the full dataset before splitting
+- **Time-based evaluation** — the model is tested on future months relative to its training window, not a random held-out sample
+- **Temporal price tracking** — repeated listings across months are kept, not deduplicated away, preserving real price movement over time
+- **Modern gradient boosting** — LightGBM and CatBoost, blended via a learned Stacking ensemble
 
 ---
 
 ## Problem Statement
 
-The goal is to predict apartment sale prices across major Polish cities using property characteristics and location features, and to evaluate whether the model generalizes to **future** listings rather than just held-out listings from the same time period.
+The goal is to predict apartment sale prices across major Polish cities using property characteristics and location features, and to test whether the model generalizes to **future** listings rather than just unseen listings from the same time period.
 
 Key questions addressed:
 1. Which property and location features most strongly predict sale price?
 2. How much does city alone explain, versus property-level characteristics?
-3. Does the model hold up when evaluated on months after its training window?
+3. Does the model hold up when evaluated on months after its training window ends?
 
 ---
 
@@ -82,7 +82,7 @@ Key questions addressed:
 ## Project Structure
 
 ```
-poland-apartment-pricing/
+real_estate_price_prediction_Poland/
 ├── 00_Data_Wrangling.ipynb          # Combine monthly files, clean, tag with snapshot month
 ├── 01_Exploratory_Analysis.ipynb    # EDA: price by city, numeric/categorical/temporal analysis
 ├── 02_Model.ipynb                   # Feature engineering, time-based split, modeling, evaluation
@@ -127,8 +127,6 @@ The cleaning pipeline (`00_Data_Wrangling.ipynb`):
 
 ### 3. Feature Engineering
 
-Adapted from the original project's ratio/count approach:
-
 | Feature | Formula | Rationale |
 |---|---|---|
 | `Log Area` | `log(squareMeters)` | Reduce right-skew |
@@ -148,7 +146,7 @@ Adapted from the original project's ratio/count approach:
 
 **Preprocessing:**
 - `OneHotEncoder(handle_unknown='ignore')` for categorical features
-- Median imputation (`SimpleImputer`) for `floor`, `floorCount`, `buildYear`, and the POI-distance columns — fit on train only. (The original project used `KNNImputer`; that doesn't scale to this dataset's row count, since KNN imputation is O(n²).)
+- Median imputation (`SimpleImputer`) for `floor`, `floorCount`, `buildYear`, and the POI-distance columns — fit on train only. (KNN-based imputation was tested first but doesn't scale to this dataset's row count, since it's an O(n²) computation.)
 - `ColumnTransformer` with `remainder='passthrough'`
 
 **Models:**
@@ -173,7 +171,7 @@ Evaluated on the held-out May–June 2024 test set:
 | CatBoost | 107,190 | 74,900 | 0.015 | 66.9% |
 | **Stacking (LGBM+CBR)** | **99,963** | **70,802** | **0.014** | **69.1%** |
 
-> The Stacking ensemble edges out LightGBM alone, echoing the original project's finding that blending outperforms any single model — this time with real numbers and a genuinely out-of-time test set behind the claim.
+> The Stacking ensemble edges out LightGBM alone on all three metrics, on a genuinely out-of-time test set.
 
 **Prediction interface:** `get_pred()` accepts raw property characteristics (city, type, size, rooms, location features, amenities, snapshot month) and returns a predicted price rounded to the nearest 1,000 PLN.
 
@@ -186,25 +184,23 @@ Evaluated on the held-out May–June 2024 test set:
 - LightGBM alone comes within ~1% of the ensemble's RMSE — most of the gain comes from LightGBM, not the ensembling itself.
 
 ### Feature Insights
-- **`squareMeters`** is the strongest single numeric predictor (r ≈ 0.64), consistent with the original Cracow-only project.
+- **`squareMeters`** is the strongest single numeric predictor (r ≈ 0.64).
 - **City** is a dominant driver: median sale price ranges from ~320K PLN (Częstochowa) to ~885K PLN (Warszawa) — nearly a 3x spread.
 - Distance-to-amenity features (school, clinic, pharmacy, etc.) show weak individual correlation with price but may still contribute through interactions captured by the tree-based models.
 
-### Business / Temporal Insights
-- Median sale price rose **~16%** from August 2023 to mid-2024 across the dataset — a trend the original single-snapshot project could not observe.
-- Property size and city remain the dominant price drivers, matching the "size and location dominate" conclusion from the original Cracow project — now validated across a 15-city dataset instead of one.
+### Temporal Insights
+- Median sale price rose **~16%** from August 2023 to mid-2024 across the dataset — a trend only visible because repeated listings were kept rather than deduplicated to a single snapshot.
+- Property size and city remain the dominant price drivers across all 15 cities and all 11 months.
 
 ---
 
 ## Design Decisions
 
-A few explicit departures from the original single-city project, made along the way:
-
-- **Kept all monthly snapshots** instead of deduplicating to the latest listing per property, to preserve real price movement over time (Option B from the original project-scoping discussion).
+- **Kept all monthly snapshots** instead of deduplicating to the latest listing per property, to preserve real price movement over time.
 - **Time-based train/test split** instead of a random split, to evaluate genuine forward generalization rather than same-period accuracy.
-- **Median imputation instead of KNN imputation** — `KNNImputer` doesn't scale to ~150K training rows.
+- **Median imputation instead of KNN imputation** — KNN-based imputation doesn't scale to ~150K training rows.
 - **`month_idx` as an ordinal feature** rather than one-hot encoding `snapshot_month`, so the model can extrapolate to months outside its training window instead of treating each month as an unrelated category.
-- **LightGBM/CatBoost in place of `GradientBoostingRegressor`** as the primary models — much faster at this scale with comparable or better accuracy; GBR is kept as an optional, commented-out cell for reference.
+- **LightGBM/CatBoost as primary models** — much faster than scikit-learn's `GradientBoostingRegressor` at this scale, with comparable or better accuracy; GBR is kept as an optional, commented-out cell for reference.
 
 ---
 
@@ -213,8 +209,8 @@ A few explicit departures from the original single-city project, made along the 
 - **Fixed hyperparameters, not grid-searched** — LightGBM, CatBoost, and the excluded GBR option all use a single reasonable configuration rather than `GridSearchCV`, to keep runtime predictable. Widen this if you have more compute time.
 - **~39% of test-period listings were also seen during training** (same apartment, earlier snapshot). This reflects realistic deployment rather than classic leakage, but it does mean part of the test set isn't fully "unseen."
 - **`month_idx` assumes a roughly monotonic trend** — if the market reverses direction beyond the training window, this feature could mislead the model rather than help it.
-- **Rent listings are excluded** — the dataset includes separate monthly rent files (`apartments_rent_pl_*.csv`, Nov 2023–Jun 2024) that aren't used here; rent and sale prices are different economic quantities and would need a separate model.
-- **No district-level analysis** — unlike the original Cracow project, this dataset has no district field, only city + coordinates/derived distances, so within-city geographic variation isn't modeled directly.
+- **Rent listings are excluded** — the source dataset includes separate monthly rent files (Nov 2023–Jun 2024) that aren't used here; rent and sale prices are different economic quantities and would need a separate model.
+- **No district-level features** — only city plus coordinates/derived distances are available, so within-city geographic variation isn't modeled directly.
 
 ---
 
@@ -222,7 +218,7 @@ A few explicit departures from the original single-city project, made along the 
 
 - **Hyperparameter tuning** via `GridSearchCV` or `RandomizedSearchCV` on LightGBM/CatBoost now that the pipeline is verified working.
 - **District-level features** by reverse-geocoding `latitude`/`longitude` into neighborhood boundaries.
-- **Rent price model** using the parallel `apartments_rent_pl_*.csv` files.
+- **Rent price model** using the parallel monthly rent files.
 - **Grouped or blocked time-series cross-validation** (rolling-origin) instead of a single train/test cutoff, for a more robust estimate of forward performance.
 - **SHAP analysis** to explain individual predictions beyond aggregate feature importance.
 - **Deploy `get_pred()`** as a small Streamlit or FastAPI app for interactive price estimates.
@@ -270,15 +266,7 @@ Download the dataset from Kaggle and place all `apartments_pl_YYYY_MM.csv` files
 
 ## Author
 
-**Sarvesh Kumar Sharma**
+**Shravani Bhagat**
 
-- GitHub: [@shsarv](https://github.com/shsarv)
-- LinkedIn: [in/shsarv](https://linkedin.com/in/shsarv)
-
-*Rebuilt as a multi-city project from the original single-city "Flats in Cracow" version.*
-
----
-
-<p align="center">
-  <a href="../README.md">← Back to repository root</a>
-</p>
+- GitHub: [@shravanil1](https://github.com/shravanil1)
+- LinkedIn: [in/shravani-bhagat](https://www.linkedin.com/in/shravani-bhagat/)
